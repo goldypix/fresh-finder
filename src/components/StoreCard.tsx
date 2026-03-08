@@ -1,12 +1,18 @@
 import { StoreResult } from "@/data/mockData";
+import { NearbyStore } from "@/lib/stores/types";
 
 export default function StoreCard({
   result,
   cheapest,
+  nearbyStore,
 }: {
   result: StoreResult;
   cheapest: boolean;
+  nearbyStore?: NearbyStore;
 }) {
+  const mapsHref = result.mapsUrl
+    ? result.mapsUrl
+    : `https://www.google.com/maps/search/${encodeURIComponent(result.mapsQuery)}`;
   return (
     <div
       className={`relative rounded-2xl border bg-white p-6 shadow-sm transition-shadow hover:shadow-md ${
@@ -19,6 +25,16 @@ export default function StoreCard({
         <span className="absolute -top-3 left-4 rounded-full bg-green-600 px-3 py-1 text-xs font-semibold text-white">
           Cheapest
         </span>
+      )}
+
+      {result.imageUrl && (
+        <div className="mb-3 flex justify-center">
+          <img
+            src={result.imageUrl}
+            alt={result.item}
+            className="h-24 w-24 rounded-lg object-contain"
+          />
+        </div>
       )}
 
       <div className="flex items-start gap-4">
@@ -35,11 +51,17 @@ export default function StoreCard({
             {result.store}
           </h3>
           <p className="mt-0.5 text-sm text-gray-500">{result.item}</p>
+          {nearbyStore && nearbyStore.distanceKm >= 0 && (
+            <p className="mt-0.5 text-xs text-gray-400">
+              {nearbyStore.name} &middot; {nearbyStore.distanceKm.toFixed(1)} km
+              away
+            </p>
+          )}
         </div>
 
         <div className="text-right">
           <p className="text-2xl font-bold text-green-700">
-            ${result.price.toFixed(2)}
+            {result.price > 0 ? `$${result.price.toFixed(2)}` : "—"}
           </p>
         </div>
       </div>
@@ -65,7 +87,7 @@ export default function StoreCard({
           Buy Online
         </a>
         <a
-          href={`https://www.google.com/maps/search/${encodeURIComponent(result.mapsQuery)}`}
+          href={mapsHref}
           target="_blank"
           rel="noopener noreferrer"
           className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-gray-300 px-4 py-2.5 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"

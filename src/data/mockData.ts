@@ -5,6 +5,8 @@ export interface StoreResult {
   price: number;
   onlineUrl: string;
   mapsQuery: string;
+  imageUrl?: string;
+  mapsUrl?: string;
 }
 
 const mockResults: Record<string, StoreResult[]> = {

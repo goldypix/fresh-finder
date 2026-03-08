@@ -1,21 +1,126 @@
 "use client";
 
-import { useState, FormEvent } from "react";
-import { getResults, StoreResult } from "@/data/mockData";
+import { useState, useRef, FormEvent } from "react";
+import { StoreResult } from "@/data/mockData";
+import { NearbyStore } from "@/lib/stores/types";
 import StoreCard from "@/components/StoreCard";
 
 export default function Home() {
   const [query, setQuery] = useState("");
   const [postcode, setPostcode] = useState("");
   const [locating, setLocating] = useState(false);
+  const [loading, setLoading] = useState(false);
   const [results, setResults] = useState<StoreResult[] | null>(null);
   const [searchedQuery, setSearchedQuery] = useState("");
+  const [searchErrors, setSearchErrors] = useState<string[]>([]);
+  const [nearbyStores, setNearbyStores] = useState<NearbyStore[] | null>(null);
+  const [userCoords, setUserCoords] = useState<{
+    lat: number;
+    lng: number;
+  } | null>(null);
+  const lastStoresFetchRef = useRef<string>("");
+
+  async function fetchResults(searchQuery: string) {
+    setLoading(true);
+    setSearchErrors([]);
+    setSearchedQuery(searchQuery.trim());
+
+    try {
+      const res = await fetch(
+        `/api/search?q=${encodeURIComponent(searchQuery.trim())}`
+      );
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.error || "Search failed");
+      }
+
+      // Map ScrapedProduct to StoreResult format
+      const mapped: StoreResult[] = (data.results || []).map(
+        (p: {
+          store: string;
+          logoColor: string;
+          name: string;
+          price: number;
+          productUrl: string;
+          imageUrl: string;
+          mapsQuery: string;
+        }) => ({
+          store: p.store,
+          logoColor: p.logoColor,
+          item: p.name,
+          price: p.price,
+          onlineUrl: p.productUrl,
+          mapsQuery: p.mapsQuery,
+          imageUrl: p.imageUrl || undefined,
+        })
+      );
+
+      setResults(mapped);
+      if (data.errors) {
+        setSearchErrors(data.errors);
+      }
+    } catch (error) {
+      console.error("Search error:", error);
+      setResults([]);
+      setSearchErrors([
+        error instanceof Error ? error.message : "Search failed",
+      ]);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function fetchNearbyStores(params: {
+    lat?: number;
+    lng?: number;
+    postcode?: string;
+  }) {
+    const key = params.lat
+      ? `${params.lat},${params.lng}`
+      : params.postcode || "";
+    if (key === lastStoresFetchRef.current) return;
+    lastStoresFetchRef.current = key;
+
+    try {
+      const searchParams = new URLSearchParams();
+      if (params.lat !== undefined)
+        searchParams.set("lat", String(params.lat));
+      if (params.lng !== undefined)
+        searchParams.set("lng", String(params.lng));
+      if (params.postcode) searchParams.set("postcode", params.postcode);
+
+      const res = await fetch(`/api/stores?${searchParams}`);
+      const data = await res.json();
+
+      if (!res.ok) return;
+
+      setNearbyStores(data.stores);
+      if (data.userLocation?.postcode) {
+        setPostcode(data.userLocation.postcode);
+      }
+      if (data.userLocation?.lat) {
+        setUserCoords({
+          lat: data.userLocation.lat,
+          lng: data.userLocation.lng,
+        });
+      }
+    } catch {
+      // Non-fatal: product results still display with generic maps links
+    }
+  }
 
   function handleSearch(e: FormEvent) {
     e.preventDefault();
     if (!query.trim()) return;
-    setResults(getResults(query, postcode));
-    setSearchedQuery(query.trim());
+    fetchResults(query);
+
+    // Fetch nearby stores in parallel if location is available
+    if (userCoords) {
+      fetchNearbyStores({ lat: userCoords.lat, lng: userCoords.lng });
+    } else if (postcode.trim()) {
+      fetchNearbyStores({ postcode: postcode.trim() });
+    }
   }
 
   function handleUseLocation() {
@@ -25,9 +130,10 @@ export default function Home() {
     }
     setLocating(true);
     navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        // In a real app, reverse-geocode to postcode. For now, use a mock.
-        setPostcode("2000");
+      (position) => {
+        const { latitude, longitude } = position.coords;
+        setUserCoords({ lat: latitude, lng: longitude });
+        fetchNearbyStores({ lat: latitude, lng: longitude });
         setLocating(false);
       },
       () => {
@@ -106,8 +212,9 @@ export default function Home() {
                 type="text"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder='Search for a grocery item (e.g. "milk", "eggs", "bread")'
-                className="w-full rounded-2xl border border-gray-300 bg-white py-4 pl-12 pr-4 text-lg shadow-sm transition-shadow placeholder:text-gray-400 focus:border-green-500 focus:outline-none focus:ring-2 focus:ring-green-200"
+                placeholder='Search for a grocery item (e.g. "full cream milk 2L")'
+                disabled={loading}
+                className="w-full rounded-2xl border border-gray-300 bg-white py-4 pl-12 pr-4 text-lg shadow-sm transition-shadow placeholder:text-gray-400 focus:border-green-500 focus:outline-none focus:ring-2 focus:ring-green-200 disabled:opacity-50"
               />
             </div>
 
@@ -189,23 +296,37 @@ export default function Home() {
             {/* Search button */}
             <button
               type="submit"
-              className="w-full rounded-2xl bg-green-600 py-4 text-lg font-semibold text-white shadow-md transition-all hover:bg-green-700 hover:shadow-lg active:scale-[0.99]"
+              disabled={loading}
+              className="w-full rounded-2xl bg-green-600 py-4 text-lg font-semibold text-white shadow-md transition-all hover:bg-green-700 hover:shadow-lg active:scale-[0.99] disabled:opacity-50"
             >
-              Compare Prices
+              {loading ? "Searching stores..." : "Compare Prices"}
             </button>
           </form>
 
           {/* Quick suggestions */}
-          {!results && (
+          {!results && !loading && (
             <div className="mx-auto mt-6 flex max-w-xl flex-wrap justify-center gap-2">
               <span className="text-sm text-gray-400">Try:</span>
-              {["milk", "eggs", "bread", "bananas", "chicken"].map((item) => (
+              {[
+                "full cream milk 2L",
+                "free range eggs",
+                "sliced bread",
+                "bananas",
+                "chicken breast",
+              ].map((item) => (
                 <button
                   key={item}
                   onClick={() => {
                     setQuery(item);
-                    setResults(getResults(item, postcode));
-                    setSearchedQuery(item);
+                    fetchResults(item);
+                    if (userCoords) {
+                      fetchNearbyStores({
+                        lat: userCoords.lat,
+                        lng: userCoords.lng,
+                      });
+                    } else if (postcode.trim()) {
+                      fetchNearbyStores({ postcode: postcode.trim() });
+                    }
                   }}
                   className="rounded-full border border-green-200 bg-green-50 px-3 py-1 text-sm font-medium text-green-700 transition-colors hover:bg-green-100"
                 >
@@ -216,8 +337,38 @@ export default function Home() {
           )}
         </section>
 
+        {/* Loading indicator */}
+        {loading && (
+          <section className="pb-20 text-center">
+            <div className="inline-flex items-center gap-3 rounded-2xl border border-green-100 bg-white px-6 py-4 shadow-sm">
+              <svg
+                className="h-5 w-5 animate-spin text-green-600"
+                fill="none"
+                viewBox="0 0 24 24"
+              >
+                <circle
+                  className="opacity-25"
+                  cx="12"
+                  cy="12"
+                  r="10"
+                  stroke="currentColor"
+                  strokeWidth="4"
+                />
+                <path
+                  className="opacity-75"
+                  fill="currentColor"
+                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+                />
+              </svg>
+              <span className="text-gray-600">
+                Searching Woolworths, Coles & Aldi...
+              </span>
+            </div>
+          </section>
+        )}
+
         {/* Results */}
-        {results && (
+        {results && !loading && (
           <section className="pb-20">
             <div className="mb-6 flex items-center justify-between">
               <h2 className="text-2xl font-bold text-gray-900">
@@ -233,6 +384,9 @@ export default function Home() {
                   setResults(null);
                   setQuery("");
                   setSearchedQuery("");
+                  setSearchErrors([]);
+                  setNearbyStores(null);
+                  lastStoresFetchRef.current = "";
                 }}
                 className="text-sm font-medium text-green-600 transition-colors hover:text-green-800"
               >
@@ -240,15 +394,42 @@ export default function Home() {
               </button>
             </div>
 
-            <div className="grid gap-4 sm:grid-cols-1 md:grid-cols-3">
-              {results.map((result, i) => (
-                <StoreCard key={result.store} result={result} cheapest={i === 0} />
-              ))}
-            </div>
+            {searchErrors.length > 0 && (
+              <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                Some stores could not be reached. Showing available results.
+              </div>
+            )}
+
+            {results.length === 0 ? (
+              <div className="rounded-2xl border border-gray-200 bg-white p-8 text-center">
+                <p className="text-gray-500">
+                  No results found. Try a different search term.
+                </p>
+              </div>
+            ) : (
+              <div className="grid gap-4 sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
+                {results.map((result, i) => {
+                  const nearbyStore = nearbyStores?.find(
+                    (s) =>
+                      s.store.toLowerCase() === result.store.toLowerCase()
+                  );
+                  return (
+                    <StoreCard
+                      key={`${result.store}-${i}`}
+                      result={{
+                        ...result,
+                        mapsUrl: nearbyStore?.mapsUrl,
+                      }}
+                      cheapest={i === 0 && result.price > 0}
+                      nearbyStore={nearbyStore}
+                    />
+                  );
+                })}
+              </div>
+            )}
 
             <p className="mt-8 text-center text-sm text-gray-400">
-              Prices are mock data for demonstration purposes. Real-time pricing
-              coming soon.
+              Prices scraped live from store websites. Results may vary.
             </p>
           </section>
         )}
